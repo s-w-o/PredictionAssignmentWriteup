@@ -1,0 +1,236 @@
+---
+title: "Peer-graded Assignment: Practical Machine Learning Course Project"
+author: "SWO"
+date: "January 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+
+The data for this project come from the following source: http://groupware.les.inf.puc-rio.br/har. 
+If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 young health participants 
+and predicted the manner in which they did the exercise - performed barbell lifts correctly and incorrectly in 5 different fashions.
+
+
+Several models were tested using random forests, boosting, regression and clasification trees, support vector machines, linear discriminant analysis, Naive Bayes. 
+The model 'random forests' with the highest accuracy was chosen as the final one.
+
+
+
+## Data description
+
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+For this data set, "6 participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions:  exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+The "classe" column is the target, a factor variable with 5 levels.
+
+The raw testing data contains 19622 obs. and 160 variables. Row testing data contains 20 obs.
+
+
+```{r, warning  = FALSE, message=FALSE, error = FALSE, results= 'hide'}
+library(caret)
+library(randomForest)
+library(rattle)
+library(rpart)
+library(pgmm)
+library(gbm)
+library(forecast)
+library(arm)
+library(caTools)
+```
+
+
+#### Load the data
+
+
+```{r, warning  = FALSE, error = FALSE}
+# training data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+training <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+#str(training)
+#summary(training)
+
+table(training$classe)
+
+# test data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","pml-testing.csv")
+testing <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+#str(testing)
+#summary(testing)       
+```
+
+
+## Data Preprocessing
+
+
+While cleaning the data, the predictors with low (or zero) variance or with 'NA' > 50% were removed, also the irrelevant variables were removed.
+
+
+
+
+```{r, warning  = FALSE, error = FALSE}
+
+# zero- or near zero-variance predictors removed
+remove1<- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[, !remove1$nzv]
+
+# predictors with more than 50% missing values removed
+remove2 <- sapply(colnames(training), function(x) if(sum(is.na(training[, x])) > 0.50 * nrow(training))  { return(TRUE)} else {return(FALSE)} )
+training <- training[, !remove2]
+
+# Variables no related with the target variable (like: id, timestamps, individuals' names, etc.) removed
+training <- training[, -(1:6)]
+
+# dim(training)
+
+# identifying correlated predictors
+HighlyCorratedPredictors <- findCorrelation(cor(training[, -53]), cutoff = .7)
+names(training)[HighlyCorratedPredictors]
+
+```
+
+
+
+## Model Selection
+
+In order to avoid overfitting and to reduce out of sample errors, TrainControl resampling was used to perform 5-fold cross validation. 
+PCA was used in the pre-processing because of many highly correlated variables.
+
+
+Severals different models were estimated.
+
+
+
+
+```{r, warning  = FALSE, error = FALSE}
+
+# the function createDataPartition was used to create a stratified random sample of the row training data into 'train' and 'test' sets:
+set.seed(314)
+inTraining <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+training_train <- training[inTraining, ] 
+training_test  <- training[-inTraining, ]
+
+
+# the function 'trainControl' was used to specifiy the type of resampling: 5-fold cross validation
+tc <- trainControl(method = "cv", number = 5, verboseIter=FALSE , preProcOptions="pca", allowParallel=TRUE)
+
+
+# predict classe with all remained variables using a random forest ("rf")
+mod_RF <- train(classe ~ ., data=training_train, method="rf", trControl = tc)
+pre_RF <- predict(mod_RF,training_test)
+
+# boosted trees ("gbm")
+mod_gbm <- train(classe ~ ., data=training_train, method="gbm", trControl = tc, verbose = FALSE)
+pre_gbm  <- predict(mod_gbm,training_test)
+
+# a Logit Boosted model ("LogitBoost")
+mod_logitboost <- train(classe ~ ., data = training_train, method = "LogitBoost", trControl= tc)
+pre_logitboost <- predict(mod_logitboost,training_test)
+
+# support vector machine "svmLinear"
+mod_svml <- train(classe ~ ., data = training_train, method = "svmLinear", trControl= tc)
+pre_svml <- predict(mod_svml,training_test)
+
+# a naive Bayes  ("nb")
+mod_nbayes <- train(classe ~ ., data = training_train, method = "nb", trControl= tc)
+pre_nbayes <- predict(mod_nbayes,training_test)
+
+# linear discriminant analysis ("lda") model
+mod_lda <- train(classe ~ ., data=training_train, method="lda", trControl = tc)
+pre_lda <- predict(mod_lda,training_test)
+
+# a classification, regression trees model ("rpart")
+mod_rpart <- train(classe ~ ., data = training_train, method = "rpart", trControl= tc)
+pre_rpart <- predict(mod_rpart,training_test)
+
+# a Bayes Generalized linear model ("bayesglm")
+mod_bayesglm <- train(classe ~ ., data = training_train, method = "bayesglm", trControl= tc)
+pre_bayesglm <- predict(mod_bayesglm,training_test)
+
+
+
+
+# Expected accuracy (in the out-of-sample data set)
+Accuracy_RF <- confusionMatrix(pre_RF, training_test$classe)$overall['Accuracy']
+Accuracy_gbm <- confusionMatrix(pre_gbm, training_test$classe)$overall['Accuracy']
+Accuracy_logitboost <- confusionMatrix(pre_logitboost, training_test$classe)$overall['Accuracy']
+Accuracy_svml <- confusionMatrix(pre_svml, training_test$classe)$overall['Accuracy']
+Accuracy_nbayes <- confusionMatrix(pre_nbayes, training_test$classe)$overall['Accuracy']
+Accuracy_lda <- confusionMatrix(pre_lda, training_test$classe)$overall['Accuracy']
+Accuracy_rpart <- confusionMatrix(pre_rpart, training_test$classe)$overall['Accuracy']
+Accuracy_bayesglm <- confusionMatrix(pre_bayesglm, training_test$classe)$overall['Accuracy']
+
+Kappa_RF <- confusionMatrix(pre_RF, training_test$classe)$overall['Kappa']
+Kappa_gbm <- confusionMatrix(pre_gbm, training_test$classe)$overall['Kappa']
+Kappa_logitboost <- confusionMatrix(pre_logitboost, training_test$classe)$overall['Kappa']
+Kappa_svml <- confusionMatrix(pre_svml, training_test$classe)$overall['Kappa']
+Kappa_nbayes <- confusionMatrix(pre_nbayes, training_test$classe)$overall['Kappa']
+Kappa_lda <- confusionMatrix(pre_lda, training_test$classe)$overall['Kappa']
+Kappa_rpart <- confusionMatrix(pre_rpart, training_test$classe)$overall['Kappa']
+Kappa_bayesglm <- confusionMatrix(pre_bayesglm, training_test$classe)$overall['Kappa']
+
+```
+
+## Model Prediction and Comparison
+
+
+Random forest (and boosted trees) provided the best accuracy.
+
+
+
+```{r, warning  = FALSE, error = FALSE}
+
+model <- c("random forest", "boosted trees", "logit boosted", "support vector machine", "naive Bayes", "linear discriminant analysis", "regression trees", "Bayes glm")
+Accuracy <- c(Accuracy_RF,  Accuracy_gbm, Accuracy_logitboost, Accuracy_svml, Accuracy_nbayes, Accuracy_lda, Accuracy_rpart, Accuracy_bayesglm)
+Kappa <- c(Kappa_RF,  Kappa_gbm, Kappa_logitboost, Kappa_svml, Kappa_nbayes, Kappa_lda, Kappa_rpart, Kappa_bayesglm)
+
+summary_accuracy <- data.frame(model, round(Accuracy,2) , round(Kappa,2) )
+colnames(summary_accuracy) <- c( "Model", "Accuracy", "Kappa")
+
+summary_accuracy
+
+
+```
+
+
+
+
+## Model Prediction for original test data
+
+
+Random forest prediction of "classe" variable for the original test data:
+
+
+```{r, warning  = FALSE, error = FALSE}
+
+pre_RF <- predict(mod_RF,testing)
+prediction <- data.frame(pre_RF)
+colnames(prediction) <- c( "random forest")
+prediction
+
+```
+
+
+
+
+
+
